@@ -100,7 +100,7 @@ The tool includes presets optimized for different image generation models:
 
 | Preset | Target Model | Description |
 |--------|--------------|-------------|
-| **Z-Image** | Z-Image, Midjourney | Very detailed, structured descriptions with markdown formatting. Focuses on composition, lighting, textures, and atmosphere with poetic precision. |
+| **Z-Image** | Z-Image | Very detailed, structured descriptions with markdown formatting. Focuses on composition, lighting, textures, and atmosphere with poetic precision. |
 | **Stable Diffusion** | SD, SDXL, Forge | Tag-based prompts with weight syntax `(element:1.2)`. Uses parentheses for emphasis and quality boosters like `(masterpiece:1.2), (best quality)`. |
 | **Simple** | General use | Concise, straightforward descriptions without special formatting. |
 
