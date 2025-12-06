@@ -26,7 +26,9 @@ _stop_event = threading.Event()
 
 def get_ollama_host() -> str:
     """Get the Ollama API host from environment or default."""
-    return os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    # Replace 0.0.0.0 with localhost for better compatibility
+    return host.replace("0.0.0.0", "localhost")
 
 
 def create_app() -> gr.Blocks:
