@@ -40,4 +40,5 @@ ENV/
 Thumbs.db
 
 # Project specific
-nul
+config/user_preferences.json
+/.claude

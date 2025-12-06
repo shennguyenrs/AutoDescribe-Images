@@ -1,5 +1,7 @@
 """CLI entry point for the Image Describer application."""
 
+import logging
+import sys
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -7,6 +9,25 @@ import typer
 
 from .config import load_config
 from .processor import process_images
+
+
+def setup_logging(debug: bool = False) -> None:
+    """Configure logging for the application.
+
+    Args:
+        debug: If True, set level to DEBUG, otherwise INFO.
+    """
+    level = logging.DEBUG if debug else logging.INFO
+    format_str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    date_format = "%H:%M:%S"
+
+    logging.basicConfig(
+        level=level,
+        format=format_str,
+        datefmt=date_format,
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
 
 app = typer.Typer(
     name="image-describer",
@@ -17,15 +38,11 @@ app = typer.Typer(
 @app.command()
 def main(
     image_folder: Annotated[
-        Path,
+        Optional[Path],
         typer.Argument(
             help="Path to the folder containing images",
-            exists=True,
-            file_okay=False,
-            dir_okay=True,
-            resolve_path=True,
         ),
-    ],
+    ] = None,
     config: Annotated[
         Optional[Path],
         typer.Option(
@@ -45,6 +62,14 @@ def main(
             help="Text appended to each description (e.g., ', By Artist')",
         ),
     ] = None,
+    prefix: Annotated[
+        Optional[str],
+        typer.Option(
+            "--prefix",
+            "-p",
+            help="Text prepended to each description",
+        ),
+    ] = None,
     overwrite: Annotated[
         bool,
         typer.Option(
@@ -60,9 +85,48 @@ def main(
             help="Verbose mode",
         ),
     ] = False,
+    debug: Annotated[
+        bool,
+        typer.Option(
+            "--debug",
+            "-d",
+            help="Enable debug logging (shows detailed API timing)",
+        ),
+    ] = False,
+    web: Annotated[
+        bool,
+        typer.Option(
+            "--web",
+            "-w",
+            help="Launch the web interface instead of CLI",
+        ),
+    ] = False,
 ) -> None:
     """Process images in a folder and generate descriptions."""
-    cfg = load_config(config, suffix=suffix)
+    # Setup logging early
+    setup_logging(debug=debug)
+    logger = logging.getLogger(__name__)
+
+    if web:
+        from .web_app import launch_web_app
+
+        launch_web_app()
+        return
+
+    if image_folder is None:
+        print("Error: Please provide an image folder path, or use --web for the web interface.")
+        raise typer.Exit(1)
+
+    if not image_folder.exists():
+        print(f"Error: Folder not found: {image_folder}")
+        raise typer.Exit(1)
+
+    if not image_folder.is_dir():
+        print(f"Error: Path is not a directory: {image_folder}")
+        raise typer.Exit(1)
+
+    cfg = load_config(config, suffix=suffix, prefix=prefix)
+    logger.info(f"Configuration loaded - Model: {cfg.model}, Host: {cfg.ollama_host or 'default'}")
 
     if verbose:
         print(f"Model: {cfg.model}")

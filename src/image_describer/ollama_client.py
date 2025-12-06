@@ -1,9 +1,14 @@
 """Ollama API client with vision model support."""
 
 import base64
+import logging
+import time
 from pathlib import Path
 
 from ollama import Client
+from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 
 def encode_image_base64(image_path: Path) -> str:
@@ -24,6 +29,7 @@ def describe_image(
     model: str,
     system_prompt: str,
     temperature: float = 0.7,
+    num_ctx: int = 8192,
     ollama_host: str | None = None,
 ) -> str:
     """Generate a description of an image via Ollama.
@@ -33,6 +39,7 @@ def describe_image(
         model: Name of the Ollama model to use.
         system_prompt: System prompt to guide the description.
         temperature: Temperature for generation.
+        num_ctx: Context window size (important for large images).
         ollama_host: Ollama server URL (optional).
 
     Returns:
@@ -41,20 +48,57 @@ def describe_image(
     Raises:
         ollama.ResponseError: On Ollama API error.
     """
-    image_data = encode_image_base64(image_path)
+    logger.debug(f"Encoding image: {image_path.name}")
+    encode_start = time.time()
 
+    # Get image dimensions for token estimation
+    with Image.open(image_path) as img:
+        width, height = img.size
+        # Estimate tokens: most vision models use ~14x14 patches after resize
+        # Rough estimate based on common vision encoders
+        max_dim = max(width, height)
+        if max_dim > 1280:
+            scale = 1280 / max_dim
+            est_width, est_height = int(width * scale), int(height * scale)
+        else:
+            est_width, est_height = width, height
+        patches = (est_width // 14) * (est_height // 14)
+        est_tokens = patches + 100  # +100 for special tokens overhead
+
+    image_data = encode_image_base64(image_path)
+    encode_time = time.time() - encode_start
+    logger.debug(
+        f"Image encoded in {encode_time:.2f}s - "
+        f"size: {width}x{height}, ~{est_tokens} tokens estimated, "
+        f"{len(image_data)} bytes base64"
+    )
+
+    host_info = ollama_host or "default (localhost:11434)"
+    logger.debug(f"Creating Ollama client (host: {host_info})")
     client = Client(host=ollama_host) if ollama_host else Client()
+
+    logger.info(f"Sending request to Ollama model '{model}' for: {image_path.name} (ctx: {num_ctx})")
+    api_start = time.time()
 
     response = client.chat(
         model=model,
         messages=[
             {
-                "role": "user",
+                "role": "system",
                 "content": system_prompt,
+            },
+            {
+                "role": "user",
+                "content": "Describe this image.",
                 "images": [image_data],
             }
         ],
-        options={"temperature": temperature},
+        options={"temperature": temperature, "num_ctx": num_ctx},
     )
 
-    return response["message"]["content"]
+    api_time = time.time() - api_start
+    response_content = response["message"]["content"]
+    logger.info(f"Response received in {api_time:.2f}s (length: {len(response_content)} chars)")
+    logger.debug(f"Response preview: {response_content[:100]}...")
+
+    return response_content
