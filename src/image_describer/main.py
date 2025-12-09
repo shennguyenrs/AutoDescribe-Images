@@ -54,6 +54,13 @@ def main(
             dir_okay=False,
         ),
     ] = None,
+    provider: Annotated[
+        Optional[str],
+        typer.Option(
+            "--provider",
+            help="Vision provider: 'ollama' or 'openai'",
+        ),
+    ] = None,
     suffix: Annotated[
         Optional[str],
         typer.Option(
@@ -68,6 +75,20 @@ def main(
             "--prefix",
             "-p",
             help="Text prepended to each description",
+        ),
+    ] = None,
+    openai_base_url: Annotated[
+        Optional[str],
+        typer.Option(
+            "--openai-url",
+            help="OpenAI-compatible API base URL (e.g., https://api.openai.com/v1)",
+        ),
+    ] = None,
+    openai_api_key: Annotated[
+        Optional[str],
+        typer.Option(
+            "--openai-key",
+            help="OpenAI-compatible API key",
         ),
     ] = None,
     overwrite: Annotated[
@@ -125,11 +146,28 @@ def main(
         print(f"Error: Path is not a directory: {image_folder}")
         raise typer.Exit(1)
 
-    cfg = load_config(config, suffix=suffix, prefix=prefix)
-    logger.info(f"Configuration loaded - Model: {cfg.model}, Host: {cfg.ollama_host or 'default'}")
+    cfg = load_config(
+        config,
+        suffix=suffix,
+        prefix=prefix,
+        provider=provider,
+        openai_base_url=openai_base_url,
+        openai_api_key=openai_api_key,
+    )
+    
+    # Log configuration
+    if cfg.provider == "ollama":
+        logger.info(f"Configuration loaded - Provider: Ollama, Model: {cfg.model}, Host: {cfg.ollama_host or 'default'}")
+    else:
+        logger.info(f"Configuration loaded - Provider: OpenAI-compatible, Model: {cfg.model}, URL: {cfg.openai_base_url or 'default'}")
 
     if verbose:
+        print(f"Provider: {cfg.provider}")
         print(f"Model: {cfg.model}")
+        if cfg.provider == "ollama":
+            print(f"Ollama Host: {cfg.ollama_host}")
+        else:
+            print(f"API URL: {cfg.openai_base_url or 'default'}")
         print(f"Folder: {image_folder}")
         print(f"Extensions: {', '.join(cfg.supported_extensions)}")
         print("-" * 40)

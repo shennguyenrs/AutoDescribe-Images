@@ -12,11 +12,13 @@ import gradio as gr
 from .config import (
     Config,
     UserPreferences,
-    list_ollama_models,
+    get_ollama_models,
+    test_ollama_connection,
     load_presets,
     load_user_preferences,
     save_user_preferences,
 )
+from .vision_client import list_models, test_connection
 from .processor import find_images, process_images_generator
 
 
@@ -63,19 +65,46 @@ def create_app() -> gr.Blocks:
         gr.HTML(
             f'<div style="display: flex; justify-content: center;"><img src="data:image/png;base64,{logo_base64}"></div>'
         )
-        gr.Markdown("Generate image descriptions using Ollama Vision models.")
+        gr.Markdown("Generate image descriptions using AI vision models.")
+        
+        # Provider selection
+        provider_radio = gr.Radio(
+            choices=[("Ollama (Local)", "ollama"), ("OpenAI-Compatible API", "openai")],
+            value=user_prefs.provider,
+            label="Vision Provider",
+            info="Choose between local Ollama or OpenAI-compatible API (OpenAI, OpenRouter, etc.)",
+        )
+        
         connection_status = gr.HTML(
-            value="<span style='color: gray;'>[Disconnected]</span>",
+            value="<span style='color: gray;'>[Not Connected]</span>",
         )
 
-        with gr.Group():
+        # Ollama settings (shown when provider is ollama)
+        with gr.Group(visible=(user_prefs.provider == "ollama")) as ollama_group:
             ollama_host_input = gr.Textbox(
-                label="Ollama API",
+                label="Ollama API URL",
                 value=get_ollama_host(),
                 placeholder="http://localhost:11434",
                 info="Ollama server URL",
             )
             connect_btn = gr.Button("🔄 Test Connection", size="sm")
+        
+        # OpenAI settings (shown when provider is openai)
+        with gr.Group(visible=(user_prefs.provider == "openai")) as openai_group:
+            openai_base_url_input = gr.Textbox(
+                label="API Base URL",
+                value="",
+                placeholder="https://api.openai.com/v1 or https://openrouter.ai/api/v1",
+                info="OpenAI-compatible API endpoint",
+            )
+            openai_api_key_input = gr.Textbox(
+                label="API Key",
+                value="",
+                placeholder="sk-...",
+                type="password",
+                info="⚠️ Not saved for security. Re-enter each session.",
+            )
+            connect_openai_btn = gr.Button("🔄 Test Connection & Load Models", size="sm")
 
         folder_input = gr.Textbox(
             label="Image Folder",
@@ -87,18 +116,20 @@ def create_app() -> gr.Blocks:
 
         with gr.Group():
             model_dropdown = gr.Dropdown(
-                label="Ollama Model",
+                label="Model",
                 choices=[],
-                value=None,
+                value=user_prefs.ollama_model if user_prefs.provider == "ollama" else user_prefs.openai_model,
                 allow_custom_value=True,
+                info="Select or type a model name",
             )
-            refresh_models_btn = gr.Button("🔄 Refresh Models", size="sm")
-            gr.HTML(
+            refresh_models_btn = gr.Button("🔄 Refresh Models", size="sm", visible=(user_prefs.provider == "ollama"))
+            model_info_html = gr.HTML(
                 '<p style="font-size: 0.85em; color: #888; margin: 4px 0 8px 0; text-align: center;">'
                 'Requires a vision model (llava, qwen3-vl, etc.) – '
                 '<a href="https://ollama.com/search?c=vision" target="_blank" '
                 'style="color: #58a6ff; text-decoration: none;">Browse vision models ↗</a>'
-                '</p>'
+                '</p>',
+                visible=(user_prefs.provider == "ollama")
             )
 
         preset_dropdown = gr.Dropdown(
@@ -154,25 +185,70 @@ def create_app() -> gr.Blocks:
 
 
 
-        def check_connection(host: str):
+        def toggle_provider(provider: str):
+            """Toggle between Ollama and OpenAI provider UI."""
+            if provider == "ollama":
+                return (
+                    gr.update(visible=True),   # ollama_group
+                    gr.update(visible=False),  # openai_group
+                    gr.update(visible=True),   # refresh_models_btn
+                    gr.update(visible=True),   # model_info_html
+                    "<span style='color: gray;'>[Not Connected]</span>",  # connection_status
+                )
+            else:  # openai
+                return (
+                    gr.update(visible=False),  # ollama_group
+                    gr.update(visible=True),   # openai_group
+                    gr.update(visible=False),  # refresh_models_btn
+                    gr.update(visible=False),  # model_info_html
+                    "<span style='color: gray;'>[Not Connected]</span>",  # connection_status
+                )
+
+        def check_ollama_connection(host: str):
             """Check connection to Ollama and refresh models list."""
             if not host:
                 return "<span style='color: red;'>[Disconnected]</span>", gr.update(choices=[], value=None)
-            try:
-                models = list_ollama_models(host)
-                if models and models != ["qwen3-vl:4b", "llava", "llama3.2-vision"]:
-                    # Use saved model if available and valid
-                    saved_model = user_prefs.ollama_model
-                    default_model = saved_model if saved_model in models else (models[0] if models else None)
-                    return f"<span style='color: #00ff00;'>[Connected]</span> ({len(models)} models)", gr.update(choices=models, value=default_model)
-                else:
-                    return "<span style='color: red;'>[Disconnected]</span>", gr.update(choices=models, value=models[0] if models else None)
-            except Exception as e:
-                return f"<span style='color: red;'>[Error]</span> {str(e)[:20]}", gr.update(choices=[], value=None)
+            
+            success, message = test_ollama_connection(host)
+            if success:
+                models = get_ollama_models(host)
+                # Use saved model if available and valid
+                saved_model = user_prefs.ollama_model
+                default_model = saved_model if saved_model in models else (models[0] if models else None)
+                return f"<span style='color: #00ff00;'>{message}</span>", gr.update(choices=models, value=default_model)
+            else:
+                return f"<span style='color: red;'>{message}</span>", gr.update(choices=[], value=None)
 
-        def refresh_models(host: str):
-            """Refresh models list from current host."""
-            models = list_ollama_models(host)
+        def check_openai_connection(base_url: str, api_key: str):
+            """Check connection to OpenAI-compatible API and load models."""
+            if not api_key:
+                return "<span style='color: red;'>✗ API key required</span>", gr.update(choices=[], value=None)
+            
+            success, message = test_connection(
+                provider="openai",
+                openai_base_url=base_url or None,
+                openai_api_key=api_key,
+            )
+            
+            if success:
+                try:
+                    models = list_models(
+                        provider="openai",
+                        openai_base_url=base_url or None,
+                        openai_api_key=api_key,
+                    )
+                    # Use saved model if available and valid
+                    saved_model = user_prefs.openai_model
+                    default_model = saved_model if saved_model in models else (models[0] if models else None)
+                    return f"<span style='color: #00ff00;'>{message}</span>", gr.update(choices=models, value=default_model)
+                except Exception as e:
+                    return f"<span style='color: orange;'>✓ Connected but failed to list models: {str(e)[:30]}</span>", gr.update(choices=[], value=None)
+            else:
+                return f"<span style='color: red;'>{message}</span>", gr.update(choices=[], value=None)
+
+        def refresh_ollama_models(host: str):
+            """Refresh models list from Ollama."""
+            models = get_ollama_models(host)
             return gr.update(choices=models, value=models[0] if models else None)
 
         def format_time(seconds: float) -> str:
@@ -200,7 +276,10 @@ def create_app() -> gr.Blocks:
 
         def process_folder(
             folder_path: str,
+            provider: str,
             ollama_host: str,
+            openai_base_url: str,
+            openai_api_key: str,
             model: str,
             preset_key: str,
             temperature: float,
@@ -244,10 +323,22 @@ def create_app() -> gr.Blocks:
             system_prompt = preset_prompts.get(preset_key, "Describe this image.")
             markdown_format = preset_markdown_format.get(preset_key, False)
 
-            # Save user preferences for next session
+            # Validate provider-specific requirements
+            if provider == "openai" and not openai_api_key:
+                yield (
+                    "Error: API key is required for OpenAI-compatible provider",
+                    gr.update(interactive=True),
+                    gr.update(interactive=False, value="Stop"),
+                    False,
+                )
+                return
+
+            # Save user preferences for next session (excluding sensitive data)
             save_user_preferences(UserPreferences(
                 image_folder=folder_path,
-                ollama_model=model or "",
+                provider=provider,
+                ollama_model=model if provider == "ollama" else "",
+                openai_model=model if provider == "openai" else "",
                 preset_key=preset_key or "",
                 prefix=prefix or "",
                 suffix=suffix or "",
@@ -256,7 +347,10 @@ def create_app() -> gr.Blocks:
             ))
 
             config = Config(
+                provider=provider,
                 ollama_host=ollama_host or get_ollama_host(),
+                openai_base_url=openai_base_url or None,
+                openai_api_key=openai_api_key or None,
                 model=model,
                 system_prompt=system_prompt,
                 temperature=temperature,
@@ -341,22 +435,37 @@ def create_app() -> gr.Blocks:
                 False,
             )
 
+        # Provider toggle
+        provider_radio.change(
+            fn=toggle_provider,
+            inputs=[provider_radio],
+            outputs=[ollama_group, openai_group, refresh_models_btn, model_info_html, connection_status],
+        )
+
+        # Ollama connection
         connect_btn.click(
-            fn=check_connection,
+            fn=check_ollama_connection,
             inputs=[ollama_host_input],
             outputs=[connection_status, model_dropdown],
         )
 
         refresh_models_btn.click(
-            fn=refresh_models,
+            fn=refresh_ollama_models,
             inputs=[ollama_host_input],
             outputs=[model_dropdown],
         )
 
-        # Auto-connect on load
+        # OpenAI connection
+        connect_openai_btn.click(
+            fn=check_openai_connection,
+            inputs=[openai_base_url_input, openai_api_key_input],
+            outputs=[connection_status, model_dropdown],
+        )
+
+        # Auto-connect on load (only for Ollama)
         app.load(
-            fn=check_connection,
-            inputs=[ollama_host_input],
+            fn=lambda provider, host: check_ollama_connection(host) if provider == "ollama" else ("<span style='color: gray;'>[Not Connected]</span>", gr.update()),
+            inputs=[provider_radio, ollama_host_input],
             outputs=[connection_status, model_dropdown],
         )
 
@@ -364,7 +473,10 @@ def create_app() -> gr.Blocks:
             fn=process_folder,
             inputs=[
                 folder_input,
+                provider_radio,
                 ollama_host_input,
+                openai_base_url_input,
+                openai_api_key_input,
                 model_dropdown,
                 preset_dropdown,
                 temperature_slider,

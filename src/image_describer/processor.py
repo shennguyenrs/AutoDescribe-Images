@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import Config
-from .ollama_client import describe_image
+from .vision_client import describe_image
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +97,13 @@ def process_images(
                 image_path=image_path,
                 model=config.model,
                 system_prompt=config.system_prompt,
+                provider=config.provider,
                 temperature=config.temperature,
                 num_ctx=config.num_ctx,
                 ollama_host=config.ollama_host,
+                max_tokens=config.max_tokens,
+                openai_base_url=config.openai_base_url,
+                openai_api_key=config.openai_api_key,
             )
 
             image_time = time.time() - image_start
@@ -179,9 +183,13 @@ def process_images_generator(
                 image_path=image_path,
                 model=config.model,
                 system_prompt=config.system_prompt,
+                provider=config.provider,
                 temperature=config.temperature,
                 num_ctx=config.num_ctx,
                 ollama_host=config.ollama_host,
+                max_tokens=config.max_tokens,
+                openai_base_url=config.openai_base_url,
+                openai_api_key=config.openai_api_key,
             )
 
             # Check again after API call (in case stop was requested during processing)
